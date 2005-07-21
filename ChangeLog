@@ -1,0 +1,20 @@
+2005-07-21 16:17  chris
+
+	* Build.PL, MANIFEST, MANIFEST.SKIP, lib/Net/IP/Match/Regexp.pm:
+	  v0.91 Improve docs and comments; cleanup
+
+2005-07-21 15:24  chris
+
+	* lib/Net/IP/Match/Regexp.pm, t/regexp.t: More docs, more tests,
+	  debugging
+
+2005-07-21 12:28  chris
+
+	* Build.PL, LICENSE, MANIFEST, MANIFEST.SKIP, Makefile.PL, README,
+	  lib/Net/IP/Match/Regexp.pm, t/regexp.t: Initial revision
+
+2005-07-21 12:28  chris
+
+	* Build.PL, LICENSE, MANIFEST, MANIFEST.SKIP, Makefile.PL, README,
+	  lib/Net/IP/Match/Regexp.pm, t/regexp.t: initial import
+

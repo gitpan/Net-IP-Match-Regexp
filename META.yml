@@ -1,14 +1,16 @@
 ---
 name: Net-IP-Match-Regexp
-version: 0.90
+version: 0.91
 author:
   - 'Clotho Advanced Media, Inc. I<cpan@clotho.com>'
 abstract: Efficiently match IPv4 addresses against IPv4 ranges via regexp
 license: perl
+requires:
+  perl: 5.6.0
 build_requires:
   Test::More: 0
 provides:
   Net::IP::Match::Regexp:
     file: lib/Net/IP/Match/Regexp.pm
-    version: 0.90
+    version: 0.91
 generated_by: Module::Build version 0.2611

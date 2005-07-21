@@ -1,13 +1,13 @@
 package Net::IP::Match::Regexp;
 
-require 5.005_62;
+require 5.006;
 use strict;
 use warnings;
 
 use base 'Exporter';
 our @EXPORT = qw();
 our @EXPORT_OK = qw( create_iprange_regexp match_ip );
-our $VERSION = '0.90';
+our $VERSION = '0.91';
 
 =head1 NAME
 
@@ -33,14 +33,22 @@ under the same terms as Perl itself.
 
 =head1 DESCRIPTION
 
-WARNING: I have not yet tested Perl versions older than 5.8.1.  This
-WILL fail on some versions, because I use the C<(?{})> regexp feature,
-but I haven't researched the limit yet.
-
 This module allows you to check an IP address against one or more IP
-ranges.  There are several other CPAN modules that perform a similar
-function.  My intuition says that the Regexp approach is the best, but
-I have not yet performed a speed comparison.
+ranges.  It employs Perl's highly optimized regular expression engine
+to do the hard work, so it is very fast.  It is optimized for speed by
+doing the match against a pre-computed regexp, which implicitly checks
+the broadest IP ranges first.  An advantage is that the regexp can be
+comuted and stored in advance (in source code, in a database table,
+etc) and reused, saving much time if the IP ranges don't change too
+often.  The match can optionally report a value instead of just a
+boolean, which makes module useful for mapping IP ranges to names or
+codes or anything else.
+
+=head1 SEE ALSO
+
+There are several other CPAN modules that perform a similar function.
+This one is faster than the other ones that I've found and tried.
+Here is a synopsis of those others:
 
 =head2 Net::IP::Match
 
@@ -54,21 +62,13 @@ program.
 (Also released as Net::IP::CMatch)
 
 Optimized for speed by doing the match in C instead of in Perl.  This
-loses efficiency because the IP ranges must be re-parsed every
-invokation.
+module loses efficiency, however, because the IP ranges must be
+re-parsed every invokation.
 
 =head2 Net::IP::Match::Resolver
 
 Uses Net::IP::Match::XS to implement a range-to-name map.
 
-=head2 Net::IP::Match::Regexp (this module)
-
-Optimized for speed by doing the match against a pre-computed regexp,
-which implicitly checks the broadest IP ranges first.  An advantage is
-that the regexp can be comuted and stored in advance (in source code,
-in a database table, etc) and reused.  The match can optionally report
-a value instead of just a boolean, which makes module useful for
-mapping IP ranges to names or codes or anything else.
 
 =head1 PERFORMANCE
 
@@ -78,10 +78,57 @@ filter case: 100,000 random IPs tested against 300 semi-random IP
 ranges.  Times are in seconds.
 
     Module                 | Setup time | Run time
-    -----------------------+------------+-------
-    Net::IP::Match::Regexp |    0.057   | 1.663
-    Net::IP::Match::XS     |    0.0     | 4.238
+    -----------------------+------------+----------
+    Net::IP::Match::Regexp |    0.057   |  1.663
+    Net::IP::Match::XS     |      n/a   |  4.238
 
+=head1 IMPLEMENTATION
+
+The speed of this module comes from the short-circuit nature of
+regular expressions.  The setup function turns all of the IP ranges
+into binary strings, and mixes them into a regexp with C<|> choices
+between ones and zeros.  This regexp can then be passed to the match
+function.  When an unambiguous match is found, the regexp sets a
+variable (via the regexp $^R feature) and terminates.  That variable
+becomes the return value for the match, typically a true value.
+
+Here's an example of the regexp for a single range, that of my company's subnet:
+
+    print create_iprange_regexp("209.249.163.0/25")'
+    # ^1101000111111001101000110(?{'1'})
+
+If I add another range, say a NAT LAN, I get:
+
+    print create_iprange_regexp("209.249.163.0/25", "192.168.0.0/16")'
+    # ^110(?:0000010101000(?{'1'})|1000111111001101000110(?{'1'}))
+
+Note that for a 192.168.x.x address, the regexp checks at most the
+first 16 bits (1100000010101000) whereas for a 209.249.163.x address,
+it goes out to 15 bits (1101000111111001101000110).  The cool part is
+that for an IP address that starts in the lower half (say 127.0.0.1)
+only needs to check the first bit (0) to see that the regexp won't
+match.
+
+If mapped return values are specified for the ranges, they get embedded
+into the regexp like so:
+
+    print create_iprange_regexp({"209.249.163.0/25" => "clotho.com",
+                                 "192.168.0.0/16" => "localhost"})'
+    # ^110(?:0000010101000(?{'localhost'})|1000111111001101000110(?{'clotho.com'}))
+
+This could be implemented in C to be even faster.  In C, it would
+probably be better to use a binary tree instead of a regexp.  However,
+a goal of this module is to create a serializable representation of
+the range data, and the regexp is perfect for that.  So, we'll
+probably never do a C version.
+
+=head1 COMPATIBILITY
+
+Because this module relies on the C<(?{ code })> feature of regexps,
+it won't work on old Perl versions.  I've successfully tested this
+module on Perl 5.6.0, 5.8.1 and 5.8.6.  In theory, the code regexp
+feature should work in 5.005, but I've used "our" and the like, so it
+won't work there.  I don't have a 5.005 to test anyway...
 
 =head1 FUNCTIONS
 
@@ -90,7 +137,7 @@ ranges.  Times are in seconds.
 =cut
 
 
-=item create_iprange_regexp ...
+=item create_iprange_regexp IPRANGE | MAP, ...
 
 This function digests IP ranges into a regular expression that can
 subsequently be used to efficiently test single IP addresses.  It
@@ -140,9 +187,15 @@ validate the ranges, perhaps via Net::CIDR or Net::IP.
 
 sub create_iprange_regexp
 {
+   # If an argument is a hash ref, flatten it
+   # If an argument is a scalar, make it a key and give it a value of 1
    my %map = map {ref $_ ? %$_ : ($_ => 1)} @_;
    
+   # The tree is a temporary construct.  It has three possible
+   # properties: 0, 1, and code.  The code is the return value for a
+   # match.
    my %tree;
+
    for my $range (keys %map)
    {
       my ($ip,$mask) = split /\//, $range;
@@ -151,17 +204,23 @@ sub create_iprange_regexp
       my @bits = split //, unpack("B32", pack("C4", split(/\./, $ip)));
       for my $val (@bits[0..$mask-1])
       {
+         # If this case is hit, it means that our IP range is a subset
+         # of some other range.
          last if ($tree->{code});
+
          $tree->{$val} ||= {};
          $tree = $tree->{$val};
       }
+      # If the code is already set, it's a non-fatal error (bad data)
       $tree->{code} ||= $map{$range};
+
       # prune redundant branches
       # this is only important if the range data is poor
       delete $tree->{0};
       delete $tree->{1};
    }
 
+   # Recurse into the tree making it into a regexp
    my $re = "^".tree2re(\%tree);
    return $re;
 }
@@ -217,7 +276,7 @@ sub tree2re
    }
    else
    {
-      die "Error\n";
+      die "Internal error";
    }
 }
 
@@ -225,15 +284,7 @@ sub tree2re
 
 __END__
 
-=head1 SEE ALSO
-
-Net::IP::Match
-
-Net::IP::Match::XS
-
-Net::IP::CMatch
-
-Net::IP::Resolver
+=back
 
 =head1 AUTHOR
 
