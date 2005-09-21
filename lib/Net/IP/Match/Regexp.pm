@@ -7,7 +7,7 @@ use warnings;
 use base 'Exporter';
 our @EXPORT = qw();
 our @EXPORT_OK = qw( create_iprange_regexp match_ip );
-our $VERSION = '0.91';
+our $VERSION = '0.92';
 
 =head1 NAME
 
@@ -44,10 +44,21 @@ often.  The match can optionally report a value instead of just a
 boolean, which makes module useful for mapping IP ranges to names or
 codes or anything else.
 
+=head1 LIMITATIONS
+
+This module does not support IPv6 addresses, although that feature
+should not be hard to implement as long as the regexps start with a 4
+vs. 6 flag.  Patches welcome.  :-)
+
+This module only accepts IP ranges in C<a.b.c.d/x> (aka CIDR)
+notation.  To work around that limitation, we recommend
+Net::CIDR::Lite to conveniently convert collections of IP address
+ranges into CIDR format.
+
 =head1 SEE ALSO
 
 There are several other CPAN modules that perform a similar function.
-This one is faster than the other ones that I've found and tried.
+This one is faster than the other ones that we've found and tried.
 Here is a synopsis of those others:
 
 =head2 Net::IP::Match
@@ -69,10 +80,9 @@ re-parsed every invokation.
 
 Uses Net::IP::Match::XS to implement a range-to-name map.
 
-
 =head1 PERFORMANCE
 
-I ran a test on my Mac G5 to compare this module to
+We ran a test on a Mac G5 to compare this module to
 Net::IP::Match::XS.  The test was intended to be a realistic net
 filter case: 100,000 random IPs tested against 300 semi-random IP
 ranges.  Times are in seconds.
@@ -92,19 +102,20 @@ function.  When an unambiguous match is found, the regexp sets a
 variable (via the regexp $^R feature) and terminates.  That variable
 becomes the return value for the match, typically a true value.
 
-Here's an example of the regexp for a single range, that of my company's subnet:
+Here's an example of the regexp for a single range, that of the
+Clotho.com subnet:
 
     print create_iprange_regexp("209.249.163.0/25")'
     # ^1101000111111001101000110(?{'1'})
 
-If I add another range, say a NAT LAN, I get:
+If we add another range, say a NAT LAN, we get:
 
     print create_iprange_regexp("209.249.163.0/25", "192.168.0.0/16")'
     # ^110(?:0000010101000(?{'1'})|1000111111001101000110(?{'1'}))
 
 Note that for a 192.168.x.x address, the regexp checks at most the
 first 16 bits (1100000010101000) whereas for a 209.249.163.x address,
-it goes out to 15 bits (1101000111111001101000110).  The cool part is
+it goes out to 25 bits (1101000111111001101000110).  The cool part is
 that for an IP address that starts in the lower half (say 127.0.0.1)
 only needs to check the first bit (0) to see that the regexp won't
 match.
@@ -136,7 +147,6 @@ won't work there.  I don't have a 5.005 to test anyway...
 
 =cut
 
-
 =item create_iprange_regexp IPRANGE | MAP, ...
 
 This function digests IP ranges into a regular expression that can
@@ -160,8 +170,14 @@ For example:
                                      "127.0.0.1/32" => "localhost"});
     print match_ip("209.249.163.62", $re2); # prints "clotho.com"
 
-Note that these two styles can be mixed (a rarely used feature).
-These two examples are equivalent:
+Be aware that the value string will be wrapped in single quotes in the
+regexp.  Therefore, you must double-escape any single quotes in that
+value.  For example:
+
+    create_iprange_regexp({"208.201.239.36/31" => "O\\'Reilly publishing"});
+
+Note that the scalar and hash styles can be mixed (a rarely used
+feature).  These two examples are equivalent:
 
     create_iprange_regexp("127.0.0.1/32",
                           {"209.249.163.0/25" => "clotho.com"},
@@ -173,31 +189,37 @@ These two examples are equivalent:
                            "10.0.0.0/8" => 1,
                            "192.168.0.0/16" => "LAN"});
 
-Special note: the value string will be wrapped in single-quotes in the
-regexp.  Therefore, you must double-escape any single quotes in that value.
-For example:
+If any of the IP ranges are overlapping, the broadest one is used.  If
+they are equivalent, then the first one passed is used.  If you have
+some data that might be ambiguous, you pass an arrayref instead of a
+hashref, but it's better to clean up your data instead!  For example:
 
-    create_iprange_regexp({"208.201.239.36/31" => "O\\'Reilly publishing"});
+    my $re = create_iprange_regexp(["1.1.1.0/31" => "zero", "1.1.1.1/31" => "one"]);
+    print match_ip("1.1.1.1", $re));   # prints "zero", since both match
 
-Warning: This function does no checking for validity of IP ranges.  It
-happily accepts C<1000.0.0.0/-38>.  Hopefully a future version will
-validate the ranges, perhaps via Net::CIDR or Net::IP.
+WARNING: This function does no checking for validity of IP ranges.  It
+happily accepts C<1000.0.0.0/-38> and makes a garbage regexp.
+Hopefully a future version will validate the ranges, perhaps via
+Net::CIDR or Net::IP.
 
 =cut
 
 sub create_iprange_regexp
 {
-   # If an argument is a hash ref, flatten it
+   # If an argument is a hash or array ref, flatten it
    # If an argument is a scalar, make it a key and give it a value of 1
-   my %map = map {ref $_ ? %$_ : ($_ => 1)} @_;
+   my @map = map {ref $_ ? (ref $_ eq "ARRAY" ? @$_ : %$_) : ($_ => 1)} @_;
    
    # The tree is a temporary construct.  It has three possible
    # properties: 0, 1, and code.  The code is the return value for a
    # match.
    my %tree;
 
-   for my $range (keys %map)
+   for (my $i=0; $i<@map; $i+=2)
    {
+      my $range = $map[$i];
+      my $match = $map[$i+1];
+
       my ($ip,$mask) = split /\//, $range;
       
       my $tree = \%tree;
@@ -211,17 +233,17 @@ sub create_iprange_regexp
          $tree->{$val} ||= {};
          $tree = $tree->{$val};
       }
-      # If the code is already set, it's a non-fatal error (bad data)
-      $tree->{code} ||= $map{$range};
+      # If the code is already set, it's a non-fatal error (redundant data)
+      $tree->{code} ||= $match;
 
       # prune redundant branches
-      # this is only important if the range data is poor
+      # this is only important if the range data is redundant
       delete $tree->{0};
       delete $tree->{1};
    }
 
    # Recurse into the tree making it into a regexp
-   my $re = "^".tree2re(\%tree);
+   my $re = "^"._tree2re(\%tree);
    return $re;
 }
 
@@ -244,6 +266,8 @@ sub match_ip
 {
    my ($ip,$re) = @_;
 
+   return undef unless ($ip && $re);
+
    local $^R;
    use re 'eval';
    unpack("B32", pack("C4", split(/\./, $ip))) =~ /$re/;
@@ -254,25 +278,25 @@ sub match_ip
 # string from a tree of IP ranges constructed by
 # create_iprange_regexp().
 
-sub tree2re
+sub _tree2re
 {
    my $tree = shift;
    
-   if ($tree->{code})
+   if (defined $tree->{code})
    {
       return "(?{'$$tree{code}'})";
    }
    elsif ($tree->{0} && $tree->{1})
    {
-      return "(?:0".tree2re($tree->{0})."|1".tree2re($tree->{1}).")";
+      return "(?:0"._tree2re($tree->{0})."|1"._tree2re($tree->{1}).")";
    }
    elsif ($tree->{0})
    {
-      return "0".tree2re($tree->{0});
+      return "0"._tree2re($tree->{0});
    }
    elsif ($tree->{1})
    {
-      return "1".tree2re($tree->{1});
+      return "1"._tree2re($tree->{1});
    }
    else
    {
