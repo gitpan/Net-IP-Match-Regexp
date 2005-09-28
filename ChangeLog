@@ -1,3 +1,13 @@
+2005-09-28 11:09  chris
+
+	* benchmark/speedtest.pl, lib/Net/IP/Match/Regexp.pm: doc cleanup
+
+2005-09-28 10:49  chris
+
+	* MANIFEST, benchmark/speedtest.pl, lib/Net/IP/Match/Regexp.pm:
+	  v0.93 Performance enhancements (about 25% via qr//).
+	  Documentation.  Add benchmark utility.
+
 2005-09-21 13:38  chris
 
 	* lib/Net/IP/Match/Regexp.pm, t/regexp.t: Add more tests to get

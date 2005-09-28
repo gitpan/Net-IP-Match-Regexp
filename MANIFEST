@@ -1,4 +1,5 @@
 index.html
+benchmark/speedtest.pl
 Build.PL
 ChangeLog
 lib/Net/IP/Match/Regexp.pm

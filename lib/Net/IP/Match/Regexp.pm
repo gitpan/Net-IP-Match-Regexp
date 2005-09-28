@@ -7,7 +7,7 @@ use warnings;
 use base 'Exporter';
 our @EXPORT = qw();
 our @EXPORT_OK = qw( create_iprange_regexp match_ip );
-our $VERSION = '0.92';
+our $VERSION = '0.93';
 
 =head1 NAME
 
@@ -40,13 +40,13 @@ doing the match against a pre-computed regexp, which implicitly checks
 the broadest IP ranges first.  An advantage is that the regexp can be
 comuted and stored in advance (in source code, in a database table,
 etc) and reused, saving much time if the IP ranges don't change too
-often.  The match can optionally report a value instead of just a
-boolean, which makes module useful for mapping IP ranges to names or
-codes or anything else.
+often.  The match can optionally report a value (e.g. a network name)
+instead of just a boolean, which makes module useful for mapping IP
+ranges to names or codes or anything else.
 
 =head1 LIMITATIONS
 
-This module does not support IPv6 addresses, although that feature
+This module does not yet support IPv6 addresses, although that feature
 should not be hard to implement as long as the regexps start with a 4
 vs. 6 flag.  Patches welcome.  :-)
 
@@ -55,91 +55,9 @@ notation.  To work around that limitation, we recommend
 Net::CIDR::Lite to conveniently convert collections of IP address
 ranges into CIDR format.
 
-=head1 SEE ALSO
-
-There are several other CPAN modules that perform a similar function.
-This one is faster than the other ones that we've found and tried.
-Here is a synopsis of those others:
-
-=head2 Net::IP::Match
-
-Optimized for speed by taking a "source filter" approach.  That is, it
-modifies your source code at run time, kind of like a C preprocessor.
-A huge limitation is that the IP ranges must be hard-coded into your
-program.
-
-=head2 Net::IP::Match::XS
-
-(Also released as Net::IP::CMatch)
-
-Optimized for speed by doing the match in C instead of in Perl.  This
-module loses efficiency, however, because the IP ranges must be
-re-parsed every invokation.
-
-=head2 Net::IP::Match::Resolver
-
-Uses Net::IP::Match::XS to implement a range-to-name map.
-
-=head1 PERFORMANCE
-
-We ran a test on a Mac G5 to compare this module to
-Net::IP::Match::XS.  The test was intended to be a realistic net
-filter case: 100,000 random IPs tested against 300 semi-random IP
-ranges.  Times are in seconds.
-
-    Module                 | Setup time | Run time
-    -----------------------+------------+----------
-    Net::IP::Match::Regexp |    0.057   |  1.663
-    Net::IP::Match::XS     |      n/a   |  4.238
-
-=head1 IMPLEMENTATION
-
-The speed of this module comes from the short-circuit nature of
-regular expressions.  The setup function turns all of the IP ranges
-into binary strings, and mixes them into a regexp with C<|> choices
-between ones and zeros.  This regexp can then be passed to the match
-function.  When an unambiguous match is found, the regexp sets a
-variable (via the regexp $^R feature) and terminates.  That variable
-becomes the return value for the match, typically a true value.
-
-Here's an example of the regexp for a single range, that of the
-Clotho.com subnet:
-
-    print create_iprange_regexp("209.249.163.0/25")'
-    # ^1101000111111001101000110(?{'1'})
-
-If we add another range, say a NAT LAN, we get:
-
-    print create_iprange_regexp("209.249.163.0/25", "192.168.0.0/16")'
-    # ^110(?:0000010101000(?{'1'})|1000111111001101000110(?{'1'}))
-
-Note that for a 192.168.x.x address, the regexp checks at most the
-first 16 bits (1100000010101000) whereas for a 209.249.163.x address,
-it goes out to 25 bits (1101000111111001101000110).  The cool part is
-that for an IP address that starts in the lower half (say 127.0.0.1)
-only needs to check the first bit (0) to see that the regexp won't
-match.
-
-If mapped return values are specified for the ranges, they get embedded
-into the regexp like so:
-
-    print create_iprange_regexp({"209.249.163.0/25" => "clotho.com",
-                                 "192.168.0.0/16" => "localhost"})'
-    # ^110(?:0000010101000(?{'localhost'})|1000111111001101000110(?{'clotho.com'}))
-
-This could be implemented in C to be even faster.  In C, it would
-probably be better to use a binary tree instead of a regexp.  However,
-a goal of this module is to create a serializable representation of
-the range data, and the regexp is perfect for that.  So, we'll
-probably never do a C version.
-
-=head1 COMPATIBILITY
-
-Because this module relies on the C<(?{ code })> feature of regexps,
-it won't work on old Perl versions.  I've successfully tested this
-module on Perl 5.6.0, 5.8.1 and 5.8.6.  In theory, the code regexp
-feature should work in 5.005, but I've used "our" and the like, so it
-won't work there.  I don't have a 5.005 to test anyway...
+This module makes no effort to validate the IP addresses or ranges
+passed as arguments.  If you pass address ranges like
+C<1000.0.0.0/300>, you will probably get weird regexps out.
 
 =head1 FUNCTIONS
 
@@ -243,7 +161,12 @@ sub create_iprange_regexp
    }
 
    # Recurse into the tree making it into a regexp
-   my $re = "^"._tree2re(\%tree);
+   my $re = "^4"._tree2re(\%tree);
+
+   # Performance optimization:
+   use re 'eval';
+   $re = qr/$re/;
+
    return $re;
 }
 
@@ -258,7 +181,7 @@ ranges match.
 See create_ipranges_regexp() for more details about the return value
 of this function.
 
-Warning: This function does no checking for validity of the IP address.
+WARNING: This function does no checking for validity of the IP address.
 
 =cut
 
@@ -270,7 +193,7 @@ sub match_ip
 
    local $^R;
    use re 'eval';
-   unpack("B32", pack("C4", split(/\./, $ip))) =~ /$re/;
+   ("4".unpack("B32", pack("C4", split(/\./, $ip)))) =~ $re;
    return $^R;
 }
 
@@ -288,7 +211,7 @@ sub _tree2re
    }
    elsif ($tree->{0} && $tree->{1})
    {
-      return "(?:0"._tree2re($tree->{0})."|1"._tree2re($tree->{1}).")";
+      return "(?>0"._tree2re($tree->{0})."|1"._tree2re($tree->{1}).")";
    }
    elsif ($tree->{0})
    {
@@ -309,6 +232,127 @@ sub _tree2re
 __END__
 
 =back
+
+=head1 SEE ALSO
+
+There are several other CPAN modules that perform a similar function.
+This one is comparable to or faster than the other ones that we've
+found and tried.  Here is a synopsis of those others:
+
+=head2 L<Net::IP::Match>
+
+Optimized for speed by taking a "source filter" approach.  That is, it
+modifies your source code at run time, kind of like a C preprocessor.
+A huge limitation is that the IP ranges must be hard-coded into your
+program.
+
+=head2 L<Net::IP::Match::XS>
+
+(Also released as Net::IP::CMatch)
+
+Optimized for speed by doing the match in C instead of in Perl.  This
+module loses efficiency, however, because the IP ranges must be
+re-parsed every invocation.
+
+=head2 L<Net::IP::Resolver>
+
+Uses Net::IP::Match::XS to implement a range-to-name map.
+
+=head1 PERFORMANCE
+
+We ran a series of test on a Mac G5 with Perl 5.8.6 to compare this
+module to Net::IP::Match::XS.  The tests are intended to be a
+realistic net filter case: 100,000 random IPs tested against a number
+of semi-random IP ranges.  Times are in seconds.
+
+    Networks: 1, IPs: 100000
+    Test name              | Setup time | Run time | Total time 
+    -----------------------+------------+----------+------------
+    Net::IP::Match::XS     |    0.000   |  0.415   |    0.415   
+    Net::IP::Match::Regexp |    0.001   |  1.141   |    1.141   
+    
+    Networks: 10, IPs: 100000
+    Test name              | Setup time | Run time | Total time 
+    -----------------------+------------+----------+------------
+    Net::IP::Match::XS     |    0.000   |  0.613   |    0.613   
+    Net::IP::Match::Regexp |    0.003   |  1.312   |    1.316   
+    
+    Networks: 100, IPs: 100000
+    Test name              | Setup time | Run time | Total time 
+    -----------------------+------------+----------+------------
+    Net::IP::Match::XS     |    0.000   |  2.621   |    2.622   
+    Net::IP::Match::Regexp |    0.024   |  1.381   |    1.405   
+    
+    Networks: 1000, IPs: 100000
+    Test name              | Setup time | Run time | Total time 
+    -----------------------+------------+----------+------------
+    Net::IP::Match::XS     |    0.003   | 20.910   |   20.912   
+    Net::IP::Match::Regexp |    0.203   |  1.514   |    1.717   
+
+This test indicates that ::Regexp is faster than ::XS when you have
+more than about 50 IP ranges to test.  The relative run time does not
+vary significantly with the number of singe IP to match, but with a
+small number of IPs to match, the setup time begins to dominate, so
+::Regexp loses in that scenario.
+
+To reproduce the above benchmarks, run the following command in the
+distribution directory:
+
+   perl benchmark/speedtest.pl -s -n 1,10,100,1000 -i 100000
+
+=head1 IMPLEMENTATION
+
+The speed of this module comes from the short-circuit nature of
+regular expressions.  The setup function turns all of the IP ranges
+into binary strings, and mixes them into a regexp with C<|> choices
+between ones and zeros.  This regexp can then be passed to the match
+function.  When an unambiguous match is found, the regexp sets a
+variable (via the regexp $^R feature) and terminates.  That variable
+becomes the return value for the match, typically a true value.
+
+Here's an example of the regexp for a single range, that of the
+Clotho.com subnet:
+
+    print create_iprange_regexp("209.249.163.0/25")'
+    # ^41101000111111001101000110(?{'1'})
+
+If we add another range, say a NAT LAN, we get:
+
+    print create_iprange_regexp("209.249.163.0/25", "192.168.0.0/16")'
+    # ^4110(?>0000010101000(?{'1'})|1000111111001101000110(?{'1'}))
+
+Note that for a 192.168.x.x address, the regexp checks at most the
+first 16 bits (1100000010101000) whereas for a 209.249.163.x address,
+it goes out to 25 bits (1101000111111001101000110).  The cool part is
+that for an IP address that starts in the lower half (say 127.0.0.1)
+only needs to check the first bit (0) to see that the regexp won't
+match.
+
+If mapped return values are specified for the ranges, they get embedded
+into the regexp like so:
+
+    print create_iprange_regexp({"209.249.163.0/25" => "clotho.com",
+                                 "192.168.0.0/16" => "localhost"})'
+    # ^4110(?>0000010101000(?{'localhost'})|1000111111001101000110(?{'clotho.com'}))
+
+This could be implemented in C to be even faster.  In C, it would
+probably be better to use a binary tree instead of a regexp.  However,
+a goal of this module is to create a serializable representation of
+the range data, and the regexp is perfect for that.  So, we'll
+probably never do a C version.
+
+=head1 COMPATIBILITY
+
+Because this module relies on the C<(?{ code })> feature of regexps,
+it won't work on old Perl versions.  I've successfully tested this
+module on Perl 5.6.0, 5.8.1 and 5.8.6.  In theory, the code regexp
+feature should work in 5.005, but I've used "our" and the like, so it
+won't work there.  I don't have a 5.005 to test anyway...
+
+=head1 TESTS
+
+This module has 100% code coverage in its regression tests, as
+reported by C<perl Build testcover>.
 
 =head1 AUTHOR
 
