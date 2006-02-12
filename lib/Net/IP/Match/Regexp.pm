@@ -1,21 +1,24 @@
 package Net::IP::Match::Regexp;
 
-require 5.006;
+use 5.006;
 use strict;
 use warnings;
+use English qw(-no_match_vars);
 
 use base 'Exporter';
-our @EXPORT = qw();
+our @EXPORT    = qw();
 our @EXPORT_OK = qw( create_iprange_regexp match_ip );
-our $VERSION = '0.93';
+our $VERSION   = '0.94';
+
+=for stopwords CIDR IP serializable
 
 =head1 NAME
 
-Net::IP::Match::Regexp - Efficiently match IPv4 addresses against IPv4 ranges via regexp
+Net::IP::Match::Regexp - Efficiently match IP addresses against ranges
 
 =head1 LICENSE
 
-Copyright 2005 Clotho Advanced Media, Inc., <cpan@clotho.com>
+Copyright 2006 Clotho Advanced Media, Inc., <cpan@clotho.com>
 
 This library is free software; you can redistribute it and/or modify it
 under the same terms as Perl itself.
@@ -36,13 +39,13 @@ under the same terms as Perl itself.
 This module allows you to check an IP address against one or more IP
 ranges.  It employs Perl's highly optimized regular expression engine
 to do the hard work, so it is very fast.  It is optimized for speed by
-doing the match against a pre-computed regexp, which implicitly checks
-the broadest IP ranges first.  An advantage is that the regexp can be
-comuted and stored in advance (in source code, in a database table,
-etc) and reused, saving much time if the IP ranges don't change too
-often.  The match can optionally report a value (e.g. a network name)
-instead of just a boolean, which makes module useful for mapping IP
-ranges to names or codes or anything else.
+doing the match against a regexp which implicitly checks the broadest
+IP ranges first.  An advantage is that the regexp can be computed and
+stored in advance (in source code, in a database table, etc) and
+reused, saving much time if the IP ranges don't change too often.  The
+match can optionally report a value (e.g. a network name) instead of
+just a boolean, which makes module useful for mapping IP ranges to
+names or codes or anything else.
 
 =head1 LIMITATIONS
 
@@ -65,7 +68,7 @@ C<1000.0.0.0/300>, you will probably get weird regexps out.
 
 =cut
 
-=item create_iprange_regexp IPRANGE | MAP, ...
+=item create_iprange_regexp($iprange | $hashref | $arrayref, ...)
 
 This function digests IP ranges into a regular expression that can
 subsequently be used to efficiently test single IP addresses.  It
@@ -101,7 +104,7 @@ feature).  These two examples are equivalent:
                           {"209.249.163.0/25" => "clotho.com"},
                           "10.0.0.0/8",
                           {"192.168.0.0/16" => "LAN"});
-
+    
     create_iprange_regexp({"127.0.0.1/32" => 1,
                            "209.249.163.0/25" => "clotho.com",
                            "10.0.0.0/8" => 1,
@@ -122,59 +125,70 @@ Net::CIDR or Net::IP.
 
 =cut
 
-sub create_iprange_regexp
-{
+sub create_iprange_regexp {
+
    # If an argument is a hash or array ref, flatten it
    # If an argument is a scalar, make it a key and give it a value of 1
-   my @map = map {ref $_ ? (ref $_ eq "ARRAY" ? @$_ : %$_) : ($_ => 1)} @_;
-   
+   my @map
+       = map {   ! ref $_            ? ( $_ => 1 )
+               :   ref $_ eq 'ARRAY' ? @{$_} 
+               :                       %{$_}         } @_;
+
    # The tree is a temporary construct.  It has three possible
    # properties: 0, 1, and code.  The code is the return value for a
    # match.
    my %tree;
 
-   for (my $i=0; $i<@map; $i+=2)
-   {
-      my $range = $map[$i];
-      my $match = $map[$i+1];
+IPRANGE:
+   for ( my $i = 0; $i < @map; $i += 2 ) {
+      my $range = $map[ $i ];
+      my $match = $map[ $i + 1 ];
 
-      my ($ip,$mask) = split /\//, $range;
-      
+      my ( $ip, $mask ) = split /\//xms, $range;
+
       my $tree = \%tree;
-      my @bits = split //, unpack("B32", pack("C4", split(/\./, $ip)));
-      for my $val (@bits[0..$mask-1])
-      {
-         # If this case is hit, it means that our IP range is a subset
-         # of some other range.
-         last if ($tree->{code});
+      my @bits = split //xms, unpack 'B32', pack 'C4', split /\./xms, $ip;
+      for my $bit ( @bits[ 0 .. $mask - 1 ] ) {
 
-         $tree->{$val} ||= {};
-         $tree = $tree->{$val};
+         # If this case is hit, it means that our IP range is a subset
+         # of some other range, and thus ignorable
+         next IPRANGE if ( $tree->{code} );
+
+         $tree->{$bit} ||= {};    # Turn a leaf into a branch, if needed
+         $tree = $tree->{$bit};   # Follow one branch
       }
+
+      # Our $tree is now a leaf node of %tree.  Set its value
       # If the code is already set, it's a non-fatal error (redundant data)
       $tree->{code} ||= $match;
 
-      # prune redundant branches
-      # this is only important if the range data is redundant
-      delete $tree->{0};
-      delete $tree->{1};
+      # Ignore case where $tree->{0} or $tree->{1} are set (i.e. if
+      # the current range encompasses any earlier-processed ranges).
+      # Those branches will be ignored in _tree2re()
    }
 
    # Recurse into the tree making it into a regexp
-   my $re = "^4"._tree2re(\%tree);
+   my $re = join q{}, '^4', _tree2re( \%tree );
 
-   # Performance optimization:
-   use re 'eval';
+   ## Performance optimization:
+
+   # If we are going to use the pattern repeatedly, it's more
+   # effiecient if it's already a regexp instead of a string.
+   # Otherwise, it needs to be compiled in each invocation of
+   # match_ip().  If the regexp is merely stored and not used then
+   # this is wasted effort.
+
+   use re 'eval';    # needed because we're interpolating into a regexp
    $re = qr/$re/;
 
    return $re;
 }
 
-=item match_ip IP_ADDR, REGEXP
+=item match_ip($ipaddr, $regexp)
 
 Given a single IP address as a string of the form C<aaa.bbb.ccc.ddd>
 and a regular expression string (typically the output of
-create_iprange_regexp()), this function returns a pre-specified value
+create_iprange_regexp()), this function returns a specified value
 (typically C<1>) if the IP is in one of the ranges, or C<undef> if no
 ranges match.
 
@@ -185,46 +199,32 @@ WARNING: This function does no checking for validity of the IP address.
 
 =cut
 
-sub match_ip
-{
-   my ($ip,$re) = @_;
+sub match_ip {
+   my ( $ip, $re ) = @_;
 
-   return undef unless ($ip && $re);
+   return if ( !$ip || !$re );
 
-   local $^R;
+   local $LAST_REGEXP_CODE_RESULT;
    use re 'eval';
-   ("4".unpack("B32", pack("C4", split(/\./, $ip)))) =~ $re;
-   return $^R;
+   ( '4' . unpack 'B32', pack 'C4', split /\./xms, $ip ) =~ m/$re/xms;
+   return $LAST_REGEXP_CODE_RESULT;
 }
 
 # Helper function.  This recurses to build the regular expression
 # string from a tree of IP ranges constructed by
 # create_iprange_regexp().
 
-sub _tree2re
-{
+sub _tree2re {
    my $tree = shift;
-   
-   if (defined $tree->{code})
-   {
-      return "(?{'$$tree{code}'})";
-   }
-   elsif ($tree->{0} && $tree->{1})
-   {
-      return "(?>0"._tree2re($tree->{0})."|1"._tree2re($tree->{1}).")";
-   }
-   elsif ($tree->{0})
-   {
-      return "0"._tree2re($tree->{0});
-   }
-   elsif ($tree->{1})
-   {
-      return "1"._tree2re($tree->{1});
-   }
-   else
-   {
-      die "Internal error";
-   }
+
+   return
+       defined $tree->{code}       ? ( "(?{'$tree->{code}'})"            )  # Match
+       : $tree->{0} && $tree->{1}  ? ( '(?>0', _tree2re($tree->{0}),
+                                       '|1', _tree2re($tree->{1}), ')' )  # Choice
+       : $tree->{0}                ? (    '0', _tree2re($tree->{0})      )  # Literal, no choice
+       : $tree->{1}                ? (    '1', _tree2re($tree->{1})      )  # Literal, no choice
+       : die 'Internal error: failed to create a regexp from the supplied IP ranges'
+       ;
 }
 
 1;
@@ -262,8 +262,8 @@ Uses Net::IP::Match::XS to implement a range-to-name map.
 
 We ran a series of test on a Mac G5 with Perl 5.8.6 to compare this
 module to Net::IP::Match::XS.  The tests are intended to be a
-realistic net filter case: 100,000 random IPs tested against a number
-of semi-random IP ranges.  Times are in seconds.
+realistic net filter case: 100,000 random IP addresses tested against
+a number of semi-random IP ranges.  Times are in seconds.
 
     Networks: 1, IPs: 100000
     Test name              | Setup time | Run time | Total time 
@@ -292,8 +292,8 @@ of semi-random IP ranges.  Times are in seconds.
 This test indicates that ::Regexp is faster than ::XS when you have
 more than about 50 IP ranges to test.  The relative run time does not
 vary significantly with the number of singe IP to match, but with a
-small number of IPs to match, the setup time begins to dominate, so
-::Regexp loses in that scenario.
+small number of IP addresses to match, the setup time begins to
+dominate, so ::Regexp loses in that scenario.
 
 To reproduce the above benchmarks, run the following command in the
 distribution directory:
@@ -307,8 +307,9 @@ regular expressions.  The setup function turns all of the IP ranges
 into binary strings, and mixes them into a regexp with C<|> choices
 between ones and zeros.  This regexp can then be passed to the match
 function.  When an unambiguous match is found, the regexp sets a
-variable (via the regexp $^R feature) and terminates.  That variable
-becomes the return value for the match, typically a true value.
+variable (via the regexp $LAST_REGEXP_CODE_RESULT, aka $^R, feature)
+and terminates.  That variable becomes the return value for the match,
+typically a true value.
 
 Here's an example of the regexp for a single range, that of the
 Clotho.com subnet:
@@ -349,13 +350,18 @@ module on Perl 5.6.0, 5.8.1 and 5.8.6.  In theory, the code regexp
 feature should work in 5.005, but I've used "our" and the like, so it
 won't work there.  I don't have a 5.005 to test anyway...
 
-=head1 TESTS
+=head1 CODING
 
 This module has 100% code coverage in its regression tests, as
-reported by C<perl Build testcover>.
+reported by L<Devel::Cover> via C<perl Build testcover>.
+
+With one exception, this module passes Perl Best Practices guidelines,
+as enforced by L<Perl::Critic> v0.10.
 
 =head1 AUTHOR
 
 Clotho Advanced Media, Inc. I<cpan@clotho.com>
 
 Primary developer: Chris Dolan
+
+=cut

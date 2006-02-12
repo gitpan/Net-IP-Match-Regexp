@@ -1,7 +1,7 @@
 index.html
 benchmark/speedtest.pl
 Build.PL
-ChangeLog
+CHANGES
 lib/Net/IP/Match/Regexp.pm
 LICENSE
 Makefile.PL

@@ -1,0 +1,28 @@
+Revision history for Perl module Net::IP::Match::Regexp
+
+0.94  12 Feb 2006
+      [ENHANCEMENTS]
+      - Minor documentation fixes
+      [INTERNALS]
+      - Refactoring for current best practices
+
+0.93  28 Sep 2005
+      [ENHANCEMENTS]
+      - Performance enhancements (about 25% via qr//)
+      - Documentation
+      - Add benchmark utility
+      - Add more tests to get Devel::Cover to 100%
+      [FIXES]
+      - Fixed a couple of corner cases.
+
+0.92  20 Sep 2005
+      [ENHANCEMENTS]
+      - Clean up documentation and Build.PL
+      - Add pod tests
+      [FIXES]
+      - Detect bad arguments to match_ip()
+      [INTERNALS]
+      - Rename helper function
+
+0.91  12 Jul 2005
+      Initial version

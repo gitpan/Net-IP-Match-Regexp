@@ -4,7 +4,7 @@ Module::Build->new(
    dist_author => 'Clotho Advanced Media, Inc. <cpan@clotho.com>',
    license => 'perl',
    requires => {
-      perl => "5.6.0",
+      'perl' => '5.6.0',
    },
    build_requires => {
       'Test::More' => 0,
