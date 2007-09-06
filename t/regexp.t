@@ -2,7 +2,7 @@
 
 BEGIN
 {
-   use Test::More tests => 15+(33*18)+11;
+   use Test::More tests => 15 + 33 * 18 + 12;
    use_ok(Net::IP::Match::Regexp);
 }
 
@@ -129,3 +129,16 @@ is(match_ip(undef, undef), undef, "match_ip - undef args");
    ok($@, "bad tree");
 }
 ####################################################
+
+#### Regression tests ####
+
+# Regression reported by Chris Snyder on Sep 5, 2007
+# Treat missing mask as /32
+
+{
+   my $regex1 = create_iprange_regexp('10.0.0.0/8', '87.134.66.128',
+                                      '87.134.87.0/24');
+   my $regex2 = create_iprange_regexp('10.0.0.0/8', '87.134.66.128/32',
+                                      '87.134.87.0/24');
+   is($regex1, $regex2, 'null mask regression');
+}

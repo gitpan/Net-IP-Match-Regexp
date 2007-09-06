@@ -1,5 +1,13 @@
 Revision history for Perl module Net::IP::Match::Regexp
 
+1.00  05 Sep 2007
+      [FIXES]
+      - Default to /32 if an IP address lacks a mask in create_iprange_regexp
+        (thanks to Chris Snyder)
+      [INTERNALS]
+      - Changed author from CLOTHO to CDOLAN
+      - Perl::Critic update
+
 0.94  12 Feb 2006
       [ENHANCEMENTS]
       - Minor documentation fixes

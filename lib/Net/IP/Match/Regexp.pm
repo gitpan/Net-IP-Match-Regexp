@@ -6,11 +6,10 @@ use warnings;
 use English qw(-no_match_vars);
 
 use base 'Exporter';
-our @EXPORT    = qw();
 our @EXPORT_OK = qw( create_iprange_regexp match_ip );
-our $VERSION   = '0.94';
+our $VERSION   = '1.00';
 
-=for stopwords CIDR IP serializable
+=for stopwords Dolan IPv6 IPv4 CPAN CIDR IP serializable preprocessor subnet
 
 =head1 NAME
 
@@ -19,6 +18,8 @@ Net::IP::Match::Regexp - Efficiently match IP addresses against ranges
 =head1 LICENSE
 
 Copyright 2006 Clotho Advanced Media, Inc., <cpan@clotho.com>
+
+Copyright 2007 Chris Dolan, <cdolan@cpan.org>
 
 This library is free software; you can redistribute it and/or modify it
 under the same terms as Perl itself.
@@ -125,13 +126,13 @@ Net::CIDR or Net::IP.
 
 =cut
 
-sub create_iprange_regexp {
+sub create_iprange_regexp {  ## no critic(RequireArgUnpacking)
 
    # If an argument is a hash or array ref, flatten it
    # If an argument is a scalar, make it a key and give it a value of 1
    my @map
        = map {   ! ref $_            ? ( $_ => 1 )
-               :   ref $_ eq 'ARRAY' ? @{$_} 
+               :   ref $_ eq 'ARRAY' ? @{$_}
                :                       %{$_}         } @_;
 
    # The tree is a temporary construct.  It has three possible
@@ -144,10 +145,13 @@ IPRANGE:
       my $range = $map[ $i ];
       my $match = $map[ $i + 1 ];
 
-      my ( $ip, $mask ) = split /\//xms, $range;
+      my ( $ip, $mask ) = split m/\//xms, $range;
+      if (! defined $mask) {
+         $mask = 32;          ## no critic(MagicNumbers)
+      }
 
       my $tree = \%tree;
-      my @bits = split //xms, unpack 'B32', pack 'C4', split /\./xms, $ip;
+      my @bits = split m//xms, unpack 'B32', pack 'C4', split m/\./xms, $ip;
       for my $bit ( @bits[ 0 .. $mask - 1 ] ) {
 
          # If this case is hit, it means that our IP range is a subset
@@ -179,7 +183,7 @@ IPRANGE:
    # this is wasted effort.
 
    use re 'eval';    # needed because we're interpolating into a regexp
-   $re = qr/$re/;
+   $re = qr/$re/xms;
 
    return $re;
 }
@@ -204,9 +208,9 @@ sub match_ip {
 
    return if ( !$ip || !$re );
 
-   local $LAST_REGEXP_CODE_RESULT;
+   local $LAST_REGEXP_CODE_RESULT = undef;
    use re 'eval';
-   ( '4' . unpack 'B32', pack 'C4', split /\./xms, $ip ) =~ m/$re/xms;
+   ( '4' . unpack 'B32', pack 'C4', split m/\./xms, $ip ) =~ m/$re/xms;
    return $LAST_REGEXP_CODE_RESULT;
 }
 
@@ -356,12 +360,18 @@ This module has 100% code coverage in its regression tests, as
 reported by L<Devel::Cover> via C<perl Build testcover>.
 
 With one exception, this module passes Perl Best Practices guidelines,
-as enforced by L<Perl::Critic> v0.10.
+as enforced by L<Perl::Critic> v1.0.74.
 
 =head1 AUTHOR
 
-Clotho Advanced Media, Inc. I<cpan@clotho.com>
+Chris Dolan
 
-Primary developer: Chris Dolan
+This module was originally developed by me at Clotho Advanced Media
+Inc.  Now I maintain it in my spare time.
+
+=head1 ACKNOWLEDGMENTS
+
+Chris Snyder contributed a valuable and well-written bug report about
+handling missing mask values.
 
 =cut

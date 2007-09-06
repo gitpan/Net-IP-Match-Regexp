@@ -5,14 +5,10 @@ LICENSE
 
 Copyright 2006 Clotho Advanced Media, Inc., <cpan@clotho.com>
 
+Copyright 2007 Chris Dolan, <cdolan@cpan.org>
+
 This library is free software; you can redistribute it and/or modify it
 under the same terms as Perl itself.
-
-
-ABOUT CLOTHO
-
-"CAM" stands for Clotho Advanced Media Inc. (www.clotho.com) which
-developed this module.  Contact us at info@clotho.com.
 
 
 INSTALLATION
