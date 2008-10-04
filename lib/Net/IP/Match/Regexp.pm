@@ -6,10 +6,8 @@ use warnings;
 use English qw(-no_match_vars);
 
 use base 'Exporter';
-our @EXPORT_OK = qw( create_iprange_regexp match_ip );
-our $VERSION   = '1.00';
-
-=for stopwords Dolan IPv6 IPv4 CPAN CIDR IP serializable preprocessor subnet
+our @EXPORT_OK = qw( create_iprange_regexp create_iprange_regexp_depthfirst match_ip );
+our $VERSION   = '1.01';
 
 =head1 NAME
 
@@ -17,9 +15,9 @@ Net::IP::Match::Regexp - Efficiently match IP addresses against ranges
 
 =head1 LICENSE
 
-Copyright 2006 Clotho Advanced Media, Inc., <cpan@clotho.com>
+Copyright 2005-2006 Clotho Advanced Media, Inc., <cpan@clotho.com>
 
-Copyright 2007 Chris Dolan, <cdolan@cpan.org>
+Copyright 2007-2008 Chris Dolan, <cdolan@cpan.org>
 
 This library is free software; you can redistribute it and/or modify it
 under the same terms as Perl itself.
@@ -31,7 +29,7 @@ under the same terms as Perl itself.
     my $regexp = create_iprange_regexp(
        qw( 10.0.0.0/8 87.134.66.128 87.134.87.0/24 145.97.0.0/16 )
     );
-    if (match_ip("209.249.163.62", $regexp)) {
+    if (match_ip('209.249.163.62', $regexp)) {
        ...
     }
 
@@ -55,7 +53,7 @@ should not be hard to implement as long as the regexps start with a 4
 vs. 6 flag.  Patches welcome.  :-)
 
 This module only accepts IP ranges in C<a.b.c.d/x> (aka CIDR)
-notation.  To work around that limitation, we recommend
+notation.  To work around that limitation, I recommend
 Net::CIDR::Lite to conveniently convert collections of IP address
 ranges into CIDR format.
 
@@ -85,39 +83,39 @@ function will be the specified return value or C<undef> for no match.
 
 For example:
 
-    my $re1 = create_iprange_regexp("209.249.163.0/25", "127.0.0.1/32");
-    print match_ip("209.249.163.62", $re1); # prints "1"
+    my $re1 = create_iprange_regexp('209.249.163.0/25', '127.0.0.1/32');
+    print match_ip('209.249.163.62', $re1); # prints '1'
     
-    my $re2 = create_iprange_regexp({"209.249.163.0/25" => "clotho.com",
-                                     "127.0.0.1/32" => "localhost"});
-    print match_ip("209.249.163.62", $re2); # prints "clotho.com"
+    my $re2 = create_iprange_regexp({'209.249.163.0/25' => 'clotho.com',
+                                     '127.0.0.1/32' => 'localhost'});
+    print match_ip('209.249.163.62', $re2); # prints 'clotho.com'
 
 Be aware that the value string will be wrapped in single quotes in the
 regexp.  Therefore, you must double-escape any single quotes in that
 value.  For example:
 
-    create_iprange_regexp({"208.201.239.36/31" => "O\\'Reilly publishing"});
+    create_iprange_regexp({'208.201.239.36/31' => 'O\\'Reilly publishing'});
 
 Note that the scalar and hash styles can be mixed (a rarely used
 feature).  These two examples are equivalent:
 
-    create_iprange_regexp("127.0.0.1/32",
-                          {"209.249.163.0/25" => "clotho.com"},
-                          "10.0.0.0/8",
-                          {"192.168.0.0/16" => "LAN"});
+    create_iprange_regexp('127.0.0.1/32',
+                          {'209.249.163.0/25' => 'clotho.com'},
+                          '10.0.0.0/8',
+                          {'192.168.0.0/16' => 'LAN'});
     
-    create_iprange_regexp({"127.0.0.1/32" => 1,
-                           "209.249.163.0/25" => "clotho.com",
-                           "10.0.0.0/8" => 1,
-                           "192.168.0.0/16" => "LAN"});
+    create_iprange_regexp({'127.0.0.1/32' => 1,
+                           '209.249.163.0/25' => 'clotho.com',
+                           '10.0.0.0/8' => 1,
+                           '192.168.0.0/16' => 'LAN'});
 
 If any of the IP ranges are overlapping, the broadest one is used.  If
 they are equivalent, then the first one passed is used.  If you have
 some data that might be ambiguous, you pass an arrayref instead of a
 hashref, but it's better to clean up your data instead!  For example:
 
-    my $re = create_iprange_regexp(["1.1.1.0/31" => "zero", "1.1.1.1/31" => "one"]);
-    print match_ip("1.1.1.1", $re));   # prints "zero", since both match
+    my $re = create_iprange_regexp(['1.1.1.0/31' => 'zero', '1.1.1.1/31' => 'one']);
+    print match_ip('1.1.1.1', $re));   # prints 'zero', since both match
 
 WARNING: This function does no checking for validity of IP ranges.  It
 happily accepts C<1000.0.0.0/-38> and makes a garbage regexp.
@@ -126,14 +124,35 @@ Net::CIDR or Net::IP.
 
 =cut
 
-sub create_iprange_regexp {  ## no critic(RequireArgUnpacking)
+sub create_iprange_regexp {   ##no critic (ArgUnpacking)
+   return _build_regexp(0, \@_);
+}
+
+=item create_iprange_regexp_depthfirst($iprange | $hashref | $arrayref, ...)
+
+Returns a regexp in matches the most specific IP range instead of the
+broadest range.  Example:
+
+    my $re = create_iprange_regexp_depthfirst({'192.168.0.0/16' => 'LAN',
+                                               '192.168.0.1' => 'router'});
+    match_ip('192.168.0.1', $re);
+
+returns 'router' instead of 'LAN'.
+
+=cut
+
+sub create_iprange_regexp_depthfirst {   ##no critic (ArgUnpacking)
+   return _build_regexp(1, \@_);
+}
+sub _build_regexp {
+   my ($depthfirst, $ipranges) = @_;
 
    # If an argument is a hash or array ref, flatten it
    # If an argument is a scalar, make it a key and give it a value of 1
    my @map
        = map {   ! ref $_            ? ( $_ => 1 )
                :   ref $_ eq 'ARRAY' ? @{$_}
-               :                       %{$_}         } @_;
+               :                       %{$_}         } @{$ipranges};
 
    # The tree is a temporary construct.  It has three possible
    # properties: 0, 1, and code.  The code is the return value for a
@@ -151,12 +170,13 @@ IPRANGE:
       }
 
       my $tree = \%tree;
-      my @bits = split m//xms, unpack 'B32', pack 'C4', split m/\./xms, $ip;
+      my @bits = split m//xms, unpack 'B32', pack 'C4', split m/[.]/xms, $ip;
+
       for my $bit ( @bits[ 0 .. $mask - 1 ] ) {
 
          # If this case is hit, it means that our IP range is a subset
          # of some other range, and thus ignorable
-         next IPRANGE if ( $tree->{code} );
+         next IPRANGE if !$depthfirst && $tree->{code};
 
          $tree->{$bit} ||= {};    # Turn a leaf into a branch, if needed
          $tree = $tree->{$bit};   # Follow one branch
@@ -172,7 +192,7 @@ IPRANGE:
    }
 
    # Recurse into the tree making it into a regexp
-   my $re = join q{}, '^4', _tree2re( \%tree );
+   my $re = join q{}, '^4', $depthfirst ? _tree2re_depthfirst( \%tree ) : _tree2re( \%tree );
 
    ## Performance optimization:
 
@@ -206,11 +226,12 @@ WARNING: This function does no checking for validity of the IP address.
 sub match_ip {
    my ( $ip, $re ) = @_;
 
-   return if ( !$ip || !$re );
+   return if !$ip;
+   return if !$re;
 
    local $LAST_REGEXP_CODE_RESULT = undef;
    use re 'eval';
-   ( '4' . unpack 'B32', pack 'C4', split m/\./xms, $ip ) =~ m/$re/xms;
+   ( '4' . unpack 'B32', pack 'C4', split m/[.]/xms, $ip ) =~ m/$re/xms;
    return $LAST_REGEXP_CODE_RESULT;
 }
 
@@ -219,16 +240,38 @@ sub match_ip {
 # create_iprange_regexp().
 
 sub _tree2re {
-   my $tree = shift;
+   my ( $tree ) = @_;
 
    return
        defined $tree->{code}       ? ( "(?{'$tree->{code}'})"            )  # Match
        : $tree->{0} && $tree->{1}  ? ( '(?>0', _tree2re($tree->{0}),
-                                       '|1', _tree2re($tree->{1}), ')' )  # Choice
+                                         '|1', _tree2re($tree->{1}), ')' )  # Choice
        : $tree->{0}                ? (    '0', _tree2re($tree->{0})      )  # Literal, no choice
        : $tree->{1}                ? (    '1', _tree2re($tree->{1})      )  # Literal, no choice
        : die 'Internal error: failed to create a regexp from the supplied IP ranges'
        ;
+}
+
+sub _tree2re_depthfirst {
+   my ( $tree ) = @_;
+
+   if (defined $tree->{code}) {
+      return '(?>',
+         $tree->{0} && $tree->{1}  ? ( '(?>0', _tree2re_depthfirst($tree->{0}),
+                                         '|1', _tree2re_depthfirst($tree->{1}), ')|' )
+       : $tree->{0}                ? (    '0', _tree2re_depthfirst($tree->{0}), q{|} )
+       : $tree->{1}                ? (    '1', _tree2re_depthfirst($tree->{1}), q{|} )
+       : (),
+       "(?{'$tree->{code}'}))";
+   } else {
+      return
+         $tree->{0} && $tree->{1}  ? ( '(?>0', _tree2re_depthfirst($tree->{0}),
+                                         '|1', _tree2re_depthfirst($tree->{1}), ')' )  # Choice
+       : $tree->{0}                ? (    '0', _tree2re_depthfirst($tree->{0})      )  # Literal, no choice
+       : $tree->{1}                ? (    '1', _tree2re_depthfirst($tree->{1})      )  # Literal, no choice
+       : die 'Internal error: failed to create a regexp from the supplied IP ranges'
+       ;
+   }
 }
 
 1;
@@ -240,7 +283,7 @@ __END__
 =head1 SEE ALSO
 
 There are several other CPAN modules that perform a similar function.
-This one is comparable to or faster than the other ones that we've
+This one is comparable to or faster than the other ones that I've
 found and tried.  Here is a synopsis of those others:
 
 =head2 L<Net::IP::Match>
@@ -264,7 +307,7 @@ Uses Net::IP::Match::XS to implement a range-to-name map.
 
 =head1 PERFORMANCE
 
-We ran a series of test on a Mac G5 with Perl 5.8.6 to compare this
+I ran a series of test on a Mac G5 with Perl 5.8.6 to compare this
 module to Net::IP::Match::XS.  The tests are intended to be a
 realistic net filter case: 100,000 random IP addresses tested against
 a number of semi-random IP ranges.  Times are in seconds.
@@ -318,12 +361,12 @@ typically a true value.
 Here's an example of the regexp for a single range, that of the
 Clotho.com subnet:
 
-    print create_iprange_regexp("209.249.163.0/25")'
+    print create_iprange_regexp('209.249.163.0/25')'
     # ^41101000111111001101000110(?{'1'})
 
 If we add another range, say a NAT LAN, we get:
 
-    print create_iprange_regexp("209.249.163.0/25", "192.168.0.0/16")'
+    print create_iprange_regexp('209.249.163.0/25', '192.168.0.0/16')'
     # ^4110(?>0000010101000(?{'1'})|1000111111001101000110(?{'1'}))
 
 Note that for a 192.168.x.x address, the regexp checks at most the
@@ -336,14 +379,14 @@ match.
 If mapped return values are specified for the ranges, they get embedded
 into the regexp like so:
 
-    print create_iprange_regexp({"209.249.163.0/25" => "clotho.com",
-                                 "192.168.0.0/16" => "localhost"})'
+    print create_iprange_regexp({'209.249.163.0/25' => 'clotho.com',
+                                 '192.168.0.0/16' => 'localhost'})'
     # ^4110(?>0000010101000(?{'localhost'})|1000111111001101000110(?{'clotho.com'}))
 
 This could be implemented in C to be even faster.  In C, it would
 probably be better to use a binary tree instead of a regexp.  However,
 a goal of this module is to create a serializable representation of
-the range data, and the regexp is perfect for that.  So, we'll
+the range data, and the regexp is perfect for that.  So, I'll
 probably never do a C version.
 
 =head1 COMPATIBILITY
@@ -351,27 +394,36 @@ probably never do a C version.
 Because this module relies on the C<(?{ code })> feature of regexps,
 it won't work on old Perl versions.  I've successfully tested this
 module on Perl 5.6.0, 5.8.1 and 5.8.6.  In theory, the code regexp
-feature should work in 5.005, but I've used "our" and the like, so it
+feature should work in 5.005, but I've used C<our> and the like, so it
 won't work there.  I don't have a 5.005 to test anyway...
+
+Update from Oct 2008: I no longer keep a 5.6.0 around, so I rely on
+cpantesters.org to tell me when this breaks for older Perls.
 
 =head1 CODING
 
 This module has 100% code coverage in its regression tests, as
 reported by L<Devel::Cover> via C<perl Build testcover>.
 
-With one exception, this module passes Perl Best Practices guidelines,
-as enforced by L<Perl::Critic> v1.0.74.
+This module passes Perl Best Practices guidelines, as enforced by
+L<Perl::Critic> v1.093.
 
 =head1 AUTHOR
 
 Chris Dolan
 
-This module was originally developed by me at Clotho Advanced Media
-Inc.  Now I maintain it in my spare time.
+I originally developed this module at Clotho Advanced Media Inc.  Now
+I maintain it in my spare time.
 
 =head1 ACKNOWLEDGMENTS
 
+TeachingBooks.net inspired and subsidized development of the original
+version of this module.
+
 Chris Snyder contributed a valuable and well-written bug report about
 handling missing mask values.
+
+Michael Aronsen of cohaesio.com suggested the depth-first matching
+feature.
 
 =cut

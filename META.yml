@@ -1,8 +1,8 @@
 ---
 name: Net-IP-Match-Regexp
-version: 1.00
+version: 1.01
 author:
-  - 'Clotho Advanced Media, Inc. <cpan@clotho.com>'
+  - 'Chris Dolan <cdolan@cpan.org>'
 abstract: Efficiently match IP addresses against ranges
 license: perl
 resources:
@@ -14,7 +14,7 @@ build_requires:
 provides:
   Net::IP::Match::Regexp:
     file: lib/Net/IP/Match/Regexp.pm
-    version: 1.00
+    version: 1.01
 generated_by: Module::Build version 0.2808
 meta-spec:
   url: http://module-build.sourceforge.net/META-spec-v1.2.html

@@ -1,5 +1,11 @@
 Revision history for Perl module Net::IP::Match::Regexp
 
+1.01  03 Oct 2008
+      [ENHANCEMENTS]
+      - Support depth-first matching (i.e., match most specific IP range)
+      [INTERNALS]
+      - Perl::Critic 1.093 compliance
+
 1.00  05 Sep 2007
       [FIXES]
       - Default to /32 if an IP address lacks a mask in create_iprange_regexp
